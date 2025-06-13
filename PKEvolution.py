@@ -251,7 +251,7 @@ class PKEvolution:
 
     def create_density_evolution_animation(self, delta_x_list, redshifts, L=None, 
                                         cmap='viridis', filename='density_evolution.mp4', 
-                                        fps=10, dpi=150):
+                                        fps=10, dpi=150,display=True):
         """
         Create an animation of density contrast evolution across redshifts.
         
