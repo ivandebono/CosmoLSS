@@ -89,8 +89,8 @@ class PKEvolution:
         ax.set_ylim(y_min * (1 - padding), y_max * (1 + padding))
         # Pre-compute z indices and axis limits (if fixed). We reverse the list so the animation goes forward in time,
         # i.e. a smaller redshigft is more recent
-        z_indices = [get_index(self.z, z) for z in self.z]
-        z_indices.reverse()
+        z_indices = [get_index(self.z, z) for z in self.z][::-1]
+   
         
 
         # Pre-initialize plot elements
