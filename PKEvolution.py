@@ -4,6 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from IPython.display import HTML
+from numpy.fft import fftn, ifftn, fftfreq
+from scipy.interpolate import interp1d
+
+from matplotlib import colors
+
+def get_index(array,value):
+
+    return np.where(np.isclose(array, value))[0][0]
 
 
 class PKEvolution:
@@ -48,12 +56,12 @@ class PKEvolution:
 
     def mk_pkz(self):
         # Calculate matter power spectrum 
-        self.kh,self.z,self.pk=self.results.get_matter_power_spectrum()
+        self.kh,self.z,self.pk=self.results.get_matter_power_spectrum(minkh=1e-4,maxkh=5,npoints=200)
 
         return self
     
     def plt_pk(self,z,grid=True,figsize=(10,6)):
-        z_index=z_index = np.where(np.isclose(self.z, z))[0][0]  # Find index of z
+        z_index=get_index(self.z, z)  # Find index of z
 
         fig,ax=plt.subplots(figsize=figsize)
         # Plot
@@ -81,7 +89,7 @@ class PKEvolution:
         ax.set_ylim(y_min * (1 - padding), y_max * (1 + padding))
         # Pre-compute z indices and axis limits (if fixed). We reverse the list so the animation goes forward in time,
         # i.e. a smaller redshigft is more recent
-        z_indices = [np.where(np.isclose(self.z, z))[0][0] for z in self.z]
+        z_indices = [get_index(self.z, z) for z in self.z]
         z_indices.reverse()
         
 
@@ -132,10 +140,100 @@ class PKEvolution:
         if filename:
             ani.save(filename, writer='ffmpeg', fps=fps, dpi=dpi)
             plt.close(fig)
-            return f"Animation saved to {filename}"
+            print(f"Animation saved to {filename}")
         if display:
             plt.close(fig)
             return HTML(ani.to_jshtml())
         else:
             return ani
 
+
+
+
+
+    def generate_density_field(self,N, L, z=0):
+        # Generate k-grid (in h/Mpc)
+        kx = 2 * np.pi * np.fft.fftfreq(N, d=L/N)
+        ky = 2 * np.pi * np.fft.fftfreq(N, d=L/N)
+        kz = 2 * np.pi * np.fft.fftfreq(N, d=L/N)
+        kx_3d, ky_3d, kz_3d = np.meshgrid(kx, ky, kz, indexing='ij')
+        k_mag = np.sqrt(kx_3d**2 + ky_3d**2 + kz_3d**2)  # shape: NxNxN
+
+        # Find the index of z
+        z_index=get_index(self.z,z)
+        # Interpolate P(k) onto 3D grid
+        Pk_interp = interp1d(self.kh, self.pk[z_index], bounds_error=False, fill_value=0)
+        Pk_3d = Pk_interp(k_mag)  # shape: NxNxN
+
+        # Generate Gaussian random field
+        rand = np.random.normal(0, 1, (N, N, N)) + 1j * np.random.normal(0, 1, (N, N, N))
+        delta_k = rand * np.sqrt(Pk_3d)  # Scale by sqrt(P(k))
+
+        # Inverse FFT to get δ(x)
+        delta_x = np.fft.ifftn(delta_k).real
+        return delta_x
+
+
+
+    def plot_density_field(self, z=0, L=None, N=None,
+                        cmap='viridis', vmin=None, vmax=None,
+                        title=None, filename=None,dpi=200):
+        """
+        Plot slices of the 3D density contrast field with redshift context.
+        
+        Parameters:
+            delta_x (ndarray): 3D density contrast field (NxNxN)
+            target_z (float): Target redshift for plot annotation (uses self.z)
+            L (float): Box size in Mpc/h (for axis labels)
+            cmap (str): Matplotlib colormap (default: 'viridis')
+            vmin/vmax (float): Colorbar limits (default: ±3σ of δ(x))
+            title (str): Custom title (auto-generated if None)
+            save_path (str): If provided, saves plot to this path
+        """
+
+        delta_x=self.generate_density_field(N,L,z)
+        
+        
+        # Set dynamic title if not provided
+        if title is None:
+            z_label = f"$z = ${z:.2f}"
+            title = f"Density Contrast $\delta(x)$ at {z_label}"
+        
+        # Set default vmin/vmax to ±3σ if not specified
+        if vmin is None or vmax is None:
+            std = delta_x.std()
+            vmin, vmax = -3*std, 3*std
+        
+        # Create figure with 3 orthogonal slices
+
+        fig = plt.figure(figsize=(15, 5))
+        gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 1, 0.05])
+        axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
+        cbar_ax = fig.add_subplot(gs[0, 3])
+            
+        # Plot slices through center
+        slices = {
+            'XY': delta_x[:, :, N//2],
+            'XZ': delta_x[:, N//2, :],
+            'YZ': delta_x[N//2, :, :]
+        }
+        
+        for ax, (label, slice_data) in zip(axes, slices.items()):
+            im = ax.imshow(slice_data, cmap=cmap, 
+                        norm=colors.Normalize(vmin=vmin, vmax=vmax),
+                        extent=(0, L or N, 0, L or N), 
+                        origin='lower')
+            ax.set_title(f'{label} Plane')
+            ax.set_xlabel('Mpc/h' if L else 'Grid Units')
+            ax.set_ylabel('Mpc/h' if L else 'Grid Units')
+
+        #   Add colorbar to the dedicated axis
+        fig.colorbar(im, cax=cbar_ax, label='δ(x)')
+        fig.suptitle(title, y=1.05)
+        plt.tight_layout()
+        
+        if filename:
+            plt.savefig(filename, bbox_inches='tight', dpi=dpi)
+        plt.show()
+
+        return self
