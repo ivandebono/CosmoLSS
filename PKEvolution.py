@@ -9,6 +9,9 @@ from scipy.interpolate import interp1d
 
 from matplotlib import colors
 
+
+
+
 def get_index(array,value):
 
     return np.where(np.isclose(array, value))[0][0]
@@ -136,7 +139,7 @@ class PKEvolution:
         fig, update, frames=len(self.z),
         init_func=init, blit=True, interval=1000/fps)
     
-    # Output handling
+        # Output handling
         if filename:
             ani.save(filename, writer='ffmpeg', fps=fps, dpi=dpi)
             plt.close(fig)
@@ -188,7 +191,8 @@ class PKEvolution:
             cmap (str): Matplotlib colormap (default: 'viridis')
             vmin/vmax (float): Colorbar limits (default: ±3σ of δ(x))
             title (str): Custom title (auto-generated if None)
-            save_path (str): If provided, saves plot to this path
+            filename (str): If provided, saves plot to this path
+            dpi (int): DPI for saved animation
         """
 
         delta_x=self.generate_density_field(N,L,z)
@@ -237,3 +241,108 @@ class PKEvolution:
         plt.show()
 
         return self
+    
+    
+    def mk_delta_x_z(self,N=128,L=100.0):
+
+        return list(map(lambda z_i: self.generate_density_field(N,L,z=z_i),self.z))
+    
+
+
+    def create_density_evolution_animation(self, delta_x_list, redshifts, L=None, 
+                                        cmap='viridis', filename='density_evolution.mp4', 
+                                        fps=10, dpi=150):
+        """
+        Create an animation of density contrast evolution across redshifts.
+        
+        Parameters:
+            delta_x_list (list): List of 3D density fields (one per redshift)
+            redshifts (array): Corresponding redshift values
+            L (float): Box size in Mpc/h (for axis labels)
+            cmap (str): Colormap to use
+            filename (str): Path to save the animation
+            fps (int): Frames per second
+            dpi (int): DPI for saved animation
+        """
+
+        plt.rcParams['animation.embed_limit'] = 100  # Set to 100MB (default is 20MB)
+        
+        # Determine global vmin/vmax across all redshifts
+        global_min = min([d.min() for d in delta_x_list])
+        global_max = max([d.max() for d in delta_x_list])
+        std = np.mean([d.std() for d in delta_x_list])
+        vmin, vmax = -3*std, 3*std  # Fixed scale based on average std
+        
+        # Set up figure with consistent colorbar
+        fig = plt.figure(figsize=(15, 5.5))  # Increased height slightly
+        gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 1, 0.05], top=0.85)  # Added top parameter
+        axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
+        cbar_ax = fig.add_subplot(gs[0, 3])
+
+
+
+        fig.suptitle('Density Contrast Evolution in the $\Lambda$CDM Universe', y=0.95)  # Lower y-position
+        
+        # Initialize plots
+        ims = []
+        for ax in axes:
+            im = ax.imshow(np.zeros_like(delta_x_list[0][:,:,0]), 
+                        cmap=cmap,
+                        norm=colors.Normalize(vmin=vmin, vmax=vmax),
+                        extent=(0, L or delta_x_list[0].shape[0], 
+                                0, L or delta_x_list[0].shape[0]),
+                        origin='lower')
+            ims.append(im)
+            ax.set_xlabel('Mpc $h^{-1}$' if L else 'Grid Units')
+
+        # Only put the y-label on the leftmost subplot 
+        axes[0].set_ylabel('Mpc $h^{-1}$' if L else 'Grid Units')
+        
+        # Set titles 
+        axes[0].set_title('XY Plane')
+        axes[1].set_title('XZ Plane')
+        axes[2].set_title('YZ Plane')
+        
+        # Add colorbar
+        fig.colorbar(ims[0], cax=cbar_ax, label='$\delta(x)$')
+        fig.tight_layout()
+
+        # Create text object
+        text = fig.text(0.5, 0.02, '', ha='center')
+
+        def init():
+            text.set_text('')  # Initialize empty
+            return text, ims[0], ims[1], ims[2]
+
+        
+        # Animation update function
+        def update(frame):
+            # Show the evolution in chronological order, i.e. put the largest redshift first, and zero last.
+            delta_x = delta_x_list[::-1][frame]
+            z = redshifts[::-1][frame]
+            
+            # Update slice data
+            ims[0].set_array(delta_x[:, :, delta_x.shape[2]//2])
+            ims[1].set_array(delta_x[:, delta_x.shape[1]//2, :])
+            ims[2].set_array(delta_x[delta_x.shape[0]//2, :, :])
+            
+            # Update text
+            text.set_text(f"Redshift: $z$ = {z:.2f}")
+
+            return text, ims[0], ims[1], ims[2]
+        
+        # Create animation
+        ani = FuncAnimation(fig, update, init_func=init,frames=len(delta_x_list),
+                        interval=500/fps, blit=False)
+        
+            
+        # Output handling
+        if filename:
+            ani.save(filename, writer='ffmpeg', fps=fps, dpi=dpi)
+            plt.close(fig)
+            print(f"Animation saved to {filename}")
+        if display:
+            plt.close(fig)
+            return HTML(ani.to_jshtml())
+        else:
+            return ani
